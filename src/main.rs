@@ -83,7 +83,7 @@ impl State {
            ),
         }
     }
-    fn deriv(p: Vector) -> Vector {
+    fn deriv(p: Vector, dir: i32) -> Vector {
         let (s, c) = (p[1]-p[0]).sin_cos();
         let s1 = p[0].sin();
         let s2 = p[1].sin();
@@ -93,8 +93,8 @@ impl State {
         Vector::new(
             p[2],
             p[3],
-            inv*(x-c*y),
-            inv*(2.*y-c*x),
+            inv*(x-c*y) + dir as f64 * p[2],
+            inv*(2.*y-c*x) + dir as f64 * p[3],
         )
 
     }
@@ -103,23 +103,27 @@ impl State {
             + (self.p[1]-self.p[0]).cos()*self.p[2]*self.p[3]
             - 2.*self.p[0].cos()
             - self.p[1].cos()
+            + 3.
     }
-    fn step(&mut self) {
+    fn step(&mut self, dir: i32) {
         let h = 0.01;
-        //println!("{}", self.energy());
-        let k1 = Self::deriv(self.p);
-        let k2 = Self::deriv(self.p + 0.5*h*k1);
-        let k3 = Self::deriv(self.p + 0.5*h*k2);
-        let k4 = Self::deriv(self.p + h*k3);
+        let k1 = Self::deriv(self.p, dir);
+        let k2 = Self::deriv(self.p + 0.5*h*k1, dir);
+        let k3 = Self::deriv(self.p + 0.5*h*k2, dir);
+        let k4 = Self::deriv(self.p + h*k3, dir);
         self.p += h/6.0 * (k1+2.*k2+2.*k3+k4);
     }
     fn draw(&self, canvas: &mut Canvas<Window>) -> Result<(), String> {
-        let c1 = self.p[0].sin_cos();
-        let c1 = (512.0 + 200.0*c1.0, 384.0+200.0*c1.1);
-        let c2 = self.p[1].sin_cos();
-        let c2 = (c1.0 + 200.0*c2.0, c1.1 + 200.0*c2.1);
-        canvas.thick_line(512, 384, c1.0 as i16, c1.1 as i16, 10, Color::RGB(0,0,0))?;
-        canvas.thick_line(c1.0 as i16, c1.1 as i16, c2.0 as i16, c2.1 as i16, 10, Color::RGB(0,0,0))?;
+        println!("{}", self.energy());
+        let mut c = [(512.,384.), self.p[0].sin_cos(), self.p[1].sin_cos()];
+        for i in 0..2 {
+            c[i+1] = (c[i].0 + 200. * c[i+1].0, c[i].1 + 200. * c[i+1].1);
+            canvas.thick_line(
+                c[i].0 as i16, c[i].1 as i16,
+                c[i+1].0 as i16, c[i+1].1 as i16,
+                10, Color::RGB(0,0,0),
+            )?;
+        }
         Ok(())
     }
 }
@@ -142,9 +146,10 @@ fn main() -> Result<(), String> {
     let mut event_pump = sdl_context.event_pump()?;
 
     let mut state = State::new();
+    let mut dir = 0;
 
     'running: loop {
-        canvas.set_draw_color(Color::RGB(255, 255, 255));
+        canvas.set_draw_color(Color::RGB(155, 155, 155));
         canvas.clear();
         for event in event_pump.poll_iter() {
             match event {
@@ -152,11 +157,20 @@ fn main() -> Result<(), String> {
                 Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
                     break 'running
                 },
+                Event::KeyDown { keycode: Some(Keycode::Up), .. } => {
+                    dir = 1;
+                },
+                Event::KeyDown { keycode: Some(Keycode::Down), .. } => {
+                    dir = -1;
+                },
                 _ => {}
             }
         }
 
-        state.step();
+        for _ in 0..10 {
+            state.step(dir);
+            dir = 0;
+        }
         state.draw(&mut canvas)?;
         canvas.present();
         std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
