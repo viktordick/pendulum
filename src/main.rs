@@ -1,8 +1,9 @@
 use std::time::Duration;
-use std::ops::{Index,IndexMut,Mul,Add,AddAssign};
+//use std::ops::{Index,IndexMut,Mul,Add,AddAssign};
 use rand::Rng;
+use std::iter;
 
-use ndarray::{array,Array1,Array2};
+use nalgebra::{SMatrix,SVector};
 
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
@@ -18,85 +19,43 @@ fn sqr(x: f64) -> f64 {
     x*x
 }
 
-#[derive(Clone, Copy)]
-struct State {
-    f: [f64; DIM],
-}
+type Vector = SVector<f64, NDF>;
+type Matrix = SMatrix<f64, NDF, NDF>;
+type StateVector = SMatrix<f64, 2, NDF>;
 
-impl Index<usize> for State {
-    type Output = f64;
-    fn index(&self, idx: usize) -> &f64 {
-        &self.f[idx]
-    }
-}
-impl IndexMut<usize> for State {
-    fn index_mut(&mut self, idx: usize) -> &mut f64 {
-        &mut self.f[idx]
-    }
-}
-impl Mul<f64> for State {
-    type Output = Self;
-    fn mul(self, rhs: f64) -> Self {
-        let mut result = Self::zero();
-        for i in 0..DIM {
-            result[i] = self[i] * rhs;
-        }
-        result
-    }
-}
-impl Mul<State> for f64 {
-    type Output = State;
-    fn mul(self, rhs: State) -> State {
-        rhs*self
-    }
-}
-impl Add for State {
-    type Output = Self;
-    fn add(self, rhs: Self) -> Self {
-        let mut result = Self::zero();
-        for i in 0..DIM { result[i] = self[i] + rhs[i] };
-        result
-    }
-}
-impl AddAssign for State {
-    fn add_assign(&mut self, rhs: Self) {
-        for i in 0..DIM { self[i] += rhs[i] };
-    }
+struct State {
+    s: StateVector,
 }
 
 impl State {
-    fn zero() -> State {
-        State{ f: [0.; DIM] }
+    fn sv_from_halves(x: &Vector, v: &Vector) -> StateVector {
+        StateVector::from_iterator(
+            x.iter().cloned().chain(v.iter().cloned())
+        )
     }
-    fn from_halves(f1: &[f64], f2: [f64; NDF]) -> State {
-        let mut f = [0.; DIM];
-        for i in 0..NDF {
-            f[i] = f1[i];
-            f[NDF+i] = f2[i];
-        }
-        State {f}
-    }
-    fn from_rand() -> State {
-        let mut rng = rand::thread_rng();
-        let mut f = [0.; DIM];
-        for i in 0..NDF {
-            f[i] = 8.*rng.gen::<f64>()-0.5;
-            f[NDF+i] = 4.*rng.gen::<f64>()-0.5;
-        }
-        State { f }
+    fn from_halves(x: &Vector, v: &Vector) -> State {
+        State {s: Self::sv_from_halves(x, v)}
     }
 
-    fn deriv(p: State, dir: i32) -> State {
+    fn from_rand() -> State {
+        let mut rng = rand::thread_rng();
+        State::from_halves(
+            &Vector::from_fn(|_, _| 8.*rng.gen::<f64>() - 0.5),
+            &Vector::from_fn(|_, _| 4.*rng.gen::<f64>() - 0.5),
+        )
+    }
+
+    fn deriv(p: StateVector, dir: i32) -> StateVector {
         // s_{jk} = min(j+1, k+1)*sin(phi_j-phi_k)
         // c_{jk} = min(j+1, k+1)*cos(phi_j-phi_k)
-        let mut s = [[0.; NDF]; NDF];
-        let mut c = [[0.; NDF]; NDF];
+        let mut s = Matrix::zeros();
+        let mut c = Matrix::zeros();
         for i in 0..NDF {
             for j in 0..i {
-                s[i][j] = (j+1) as f64*(p[i]-p[j]).sin();
-                s[j][i] = -s[i][j];
-                c[i][j] = (j+1) as f64*(p[i]-p[j]).cos();
-                c[j][i] = c[i][j];
+                s[(i,j)] = (j+1) as f64*(p[i]-p[j]).sin();
+                s[(j,i)] = -s[(i,j)];
+                c[(i,j)] = (j+1) as f64*(p[i]-p[j]).cos();
+                c[(j,i)] = c[(i,j)];
             }
         }
         // RHS vector
@@ -104,14 +63,14 @@ impl State {
         for i in 0..NDF {
             y[i] = 0.5 * i as f64 * p[i].sin();
             for j in 0..NDF {
-                y[i] += s[i][j] * sqr(p[NDF+j]);
+                y[i] += s[(i,j)] * sqr(p[NDF+j]);
             }
         }
         // TODO: Invert c*x=y using CG
 
-        State::from_halves(
-            &p.f[NDF..DIM],
-            [0.; NDF],
+        State::sv_from_halves(
+            &Vector::from_iterator(p.row(1).iter().cloned()),
+            &Vector::from_iterator([0.; NDF].iter().cloned()),
         )
     }
 
@@ -121,11 +80,11 @@ impl State {
 
     fn step(&mut self, dir: i32) {
         let h = 0.001;
-        let k1 = Self::deriv(*self, dir);
-        let k2 = Self::deriv(*self + 0.5*h*k1, dir);
-        let k3 = Self::deriv(*self + 0.5*h*k2, dir);
-        let k4 = Self::deriv(*self + h*k3, dir);
-        *self += h/6.0 * (k1+2.*k2+2.*k3+k4);
+        let k1 = Self::deriv(self.s, dir);
+        let k2 = Self::deriv(self.s + 0.5*h*k1, dir);
+        let k3 = Self::deriv(self.s + 0.5*h*k2, dir);
+        let k4 = Self::deriv(self.s + h*k3, dir);
+        self.s += h/6.0 * (k1+2.*k2+2.*k3+k4);
     }
 
     fn draw(&self, canvas: &mut Canvas<Window>) -> Result<(), String> {
@@ -133,7 +92,7 @@ impl State {
         let mut pos = (512., 384.);
         let mut nextpos: (f64, f64);
         for i in (0..NDF).rev() {
-            let (s, c) = self[i].sin_cos();
+            let (s, c) = self.s[i].sin_cos();
             let nextpos = (
                 pos.0 + 50. * s,
                 pos.1 + 50. * c,
