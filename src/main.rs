@@ -2,6 +2,8 @@ use std::time::Duration;
 use std::ops::{Index,IndexMut,Mul,Add,AddAssign};
 use rand::Rng;
 
+use ndarray::{array,Array1,Array2};
+
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
@@ -9,7 +11,8 @@ use sdl2::render::Canvas;
 use sdl2::video::Window;
 use sdl2::gfx::primitives::DrawRenderer;
 
-const DIM: usize = 4;
+const NDF: usize = 10;
+const DIM: usize = 2*NDF;
 
 fn sqr(x: f64) -> f64 {
     x*x
@@ -62,45 +65,58 @@ impl AddAssign for State {
 }
 
 impl State {
-    fn new(f: [f64; DIM]) -> State {
-        State{ f: f }
-    }
     fn zero() -> State {
         State{ f: [0.; DIM] }
     }
+    fn from_halves(f1: &[f64], f2: [f64; NDF]) -> State {
+        let mut f = [0.; DIM];
+        for i in 0..NDF {
+            f[i] = f1[i];
+            f[NDF+i] = f2[i];
+        }
+        State {f}
+    }
     fn from_rand() -> State {
         let mut rng = rand::thread_rng();
-        State {
-            f: [
-               8.*(rng.gen::<f64>()-0.5),
-               8.*(rng.gen::<f64>()-0.5),
-               4.*rng.gen::<f64>()-0.5,
-               4.*rng.gen::<f64>()-0.5,
-            ],
+        let mut f = [0.; DIM];
+        for i in 0..NDF {
+            f[i] = 8.*rng.gen::<f64>()-0.5;
+            f[NDF+i] = 4.*rng.gen::<f64>()-0.5;
         }
+        State { f }
     }
 
     fn deriv(p: State, dir: i32) -> State {
-        let (s, c) = (p[1]-p[0]).sin_cos();
-        let s1 = p[0].sin();
-        let s2 = p[1].sin();
-        let x = 2.*s1-s*sqr(p[3]);
-        let y = s*sqr(p[2])+s2;
-        let inv = -1./(1.+sqr(s));
-        State::new([
-            p[2],
-            p[3],
-            inv*(x-c*y) + dir as f64 * p[2],
-            inv*(2.*y-c*x) + dir as f64 * p[3],
-        ])
+        // s_{jk} = min(j+1, k+1)*sin(phi_j-phi_k)
+        // c_{jk} = min(j+1, k+1)*cos(phi_j-phi_k)
+        let mut s = [[0.; NDF]; NDF];
+        let mut c = [[0.; NDF]; NDF];
+        for i in 0..NDF {
+            for j in 0..i {
+                s[i][j] = (j+1) as f64*(p[i]-p[j]).sin();
+                s[j][i] = -s[i][j];
+                c[i][j] = (j+1) as f64*(p[i]-p[j]).cos();
+                c[j][i] = c[i][j];
+            }
+        }
+        // RHS vector
+        let mut y = [0.; NDF];
+        for i in 0..NDF {
+            y[i] = 0.5 * i as f64 * p[i].sin();
+            for j in 0..NDF {
+                y[i] += s[i][j] * sqr(p[NDF+j]);
+            }
+        }
+        // TODO: Invert c*x=y using CG
+
+        State::from_halves(
+            &p.f[NDF..DIM],
+            [0.; NDF],
+        )
     }
 
     fn energy(&self) -> f64 {
-        sqr(self[2]) + sqr(self[3])/2.
-            + (self[1]-self[0]).cos()*self[2]*self[3]
-            - 2.*self[0].cos()
-            - self[1].cos()
-            + 3.
+        0.
     }
 
     fn step(&mut self, dir: i32) {
@@ -114,14 +130,23 @@ impl State {
 
     fn draw(&self, canvas: &mut Canvas<Window>) -> Result<(), String> {
         println!("{}", self.energy());
-        let mut c = [(512.,384.), self[0].sin_cos(), self[1].sin_cos()];
-        for i in 0..2 {
-            c[i+1] = (c[i].0 + 200. * c[i+1].0, c[i].1 + 200. * c[i+1].1);
+        let mut pos = (512., 384.);
+        let mut nextpos: (f64, f64);
+        for i in (0..NDF).rev() {
+            let (s, c) = self[i].sin_cos();
+            let nextpos = (
+                pos.0 + 50. * s,
+                pos.1 + 50. * c,
+            );
             canvas.thick_line(
-                c[i].0 as i16, c[i].1 as i16,
-                c[i+1].0 as i16, c[i+1].1 as i16,
+                pos.0 as i16, pos.1 as i16,
+                nextpos.0 as i16, nextpos.1 as i16,
                 10, Color::RGB(0,0,0),
             )?;
+            canvas.filled_circle(
+                pos.0 as i16, pos.1 as i16, 5, Color::RGB(0,0,0)
+            )?;
+            pos = nextpos;
         }
         Ok(())
     }
@@ -145,6 +170,7 @@ fn main() -> Result<(), String> {
 
     let mut state = State::from_rand();
     let mut dir = 0;
+
 
     'running: loop {
         canvas.set_draw_color(Color::RGB(155, 155, 155));
