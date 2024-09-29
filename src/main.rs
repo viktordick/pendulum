@@ -9,113 +9,112 @@ use sdl2::render::Canvas;
 use sdl2::video::Window;
 use sdl2::gfx::primitives::DrawRenderer;
 
+const DIM: usize = 4;
+
 fn sqr(x: f64) -> f64 {
     x*x
 }
 
 #[derive(Clone, Copy)]
-struct Vector {
-    f: [f64; 4],
+struct State {
+    f: [f64; DIM],
 }
 
-impl Vector {
-    fn new(x1: f64, x2: f64, x3: f64, x4: f64) -> Vector {
-        Vector{ f: [x1, x2, x3, x4] }
-    }
-    fn zero() -> Vector {
-        Vector{ f: [0.; 4] }
-    }
-}
-impl Index<usize> for Vector {
+impl Index<usize> for State {
     type Output = f64;
     fn index(&self, idx: usize) -> &f64 {
         &self.f[idx]
     }
 }
-impl IndexMut<usize> for Vector {
+impl IndexMut<usize> for State {
     fn index_mut(&mut self, idx: usize) -> &mut f64 {
         &mut self.f[idx]
     }
 }
-impl Mul<f64> for Vector {
+impl Mul<f64> for State {
     type Output = Self;
     fn mul(self, rhs: f64) -> Self {
         let mut result = Self::zero();
-        for i in 0..4 {
+        for i in 0..DIM {
             result[i] = self[i] * rhs;
         }
         result
     }
 }
-impl Mul<Vector> for f64 {
-    type Output = Vector;
-    fn mul(self, rhs: Vector) -> Vector {
+impl Mul<State> for f64 {
+    type Output = State;
+    fn mul(self, rhs: State) -> State {
         rhs*self
     }
 }
-impl Add for Vector {
+impl Add for State {
     type Output = Self;
     fn add(self, rhs: Self) -> Self {
         let mut result = Self::zero();
-        for i in 0..4 { result[i] = self[i] + rhs[i] };
+        for i in 0..DIM { result[i] = self[i] + rhs[i] };
         result
     }
 }
-impl AddAssign for Vector {
+impl AddAssign for State {
     fn add_assign(&mut self, rhs: Self) {
-        for i in 0..4 { self[i] += rhs[i] };
+        for i in 0..DIM { self[i] += rhs[i] };
     }
-}
-
-struct State {
-    p: Vector,
 }
 
 impl State {
-    fn new() -> State {
+    fn new(f: [f64; DIM]) -> State {
+        State{ f: f }
+    }
+    fn zero() -> State {
+        State{ f: [0.; DIM] }
+    }
+    fn from_rand() -> State {
         let mut rng = rand::thread_rng();
         State {
-            p: Vector::new(
+            f: [
                8.*(rng.gen::<f64>()-0.5),
                8.*(rng.gen::<f64>()-0.5),
                4.*rng.gen::<f64>()-0.5,
                4.*rng.gen::<f64>()-0.5,
-           ),
+            ],
         }
     }
-    fn deriv(p: Vector, dir: i32) -> Vector {
+
+    fn deriv(p: State, dir: i32) -> State {
         let (s, c) = (p[1]-p[0]).sin_cos();
         let s1 = p[0].sin();
         let s2 = p[1].sin();
         let x = 2.*s1-s*sqr(p[3]);
         let y = s*sqr(p[2])+s2;
         let inv = -1./(1.+sqr(s));
-        Vector::new(
+        State::new([
             p[2],
             p[3],
             inv*(x-c*y) + dir as f64 * p[2],
             inv*(2.*y-c*x) + dir as f64 * p[3],
-        )
-
+        ])
     }
+
     fn energy(&self) -> f64 {
-        sqr(self.p[2]) + sqr(self.p[3])/2.
-            + (self.p[1]-self.p[0]).cos()*self.p[2]*self.p[3]
-            - 2.*self.p[0].cos()
-            - self.p[1].cos()
+        sqr(self[2]) + sqr(self[3])/2.
+            + (self[1]-self[0]).cos()*self[2]*self[3]
+            - 2.*self[0].cos()
+            - self[1].cos()
             + 3.
     }
+
     fn step(&mut self, dir: i32) {
-        let h = 0.01;
-        let k1 = Self::deriv(self.p, dir);
-        let k2 = Self::deriv(self.p + 0.5*h*k1, dir);
-        let k3 = Self::deriv(self.p + 0.5*h*k2, dir);
-        let k4 = Self::deriv(self.p + h*k3, dir);
-        self.p += h/6.0 * (k1+2.*k2+2.*k3+k4);
+        let h = 0.001;
+        let k1 = Self::deriv(*self, dir);
+        let k2 = Self::deriv(*self + 0.5*h*k1, dir);
+        let k3 = Self::deriv(*self + 0.5*h*k2, dir);
+        let k4 = Self::deriv(*self + h*k3, dir);
+        *self += h/6.0 * (k1+2.*k2+2.*k3+k4);
     }
+
     fn draw(&self, canvas: &mut Canvas<Window>) -> Result<(), String> {
         println!("{}", self.energy());
-        let mut c = [(512.,384.), self.p[0].sin_cos(), self.p[1].sin_cos()];
+        let mut c = [(512.,384.), self[0].sin_cos(), self[1].sin_cos()];
         for i in 0..2 {
             c[i+1] = (c[i].0 + 200. * c[i+1].0, c[i].1 + 200. * c[i+1].1);
             canvas.thick_line(
@@ -139,13 +138,12 @@ fn main() -> Result<(), String> {
         .build()
         .map_err(|e| e.to_string())?
         .into_canvas()
-        .present_vsync()
         .accelerated()
         .build()
         .map_err(|e| e.to_string())?;
     let mut event_pump = sdl_context.event_pump()?;
 
-    let mut state = State::new();
+    let mut state = State::from_rand();
     let mut dir = 0;
 
     'running: loop {
@@ -167,7 +165,7 @@ fn main() -> Result<(), String> {
             }
         }
 
-        for _ in 0..10 {
+        for _ in 0..100 {
             state.step(dir);
             dir = 0;
         }
