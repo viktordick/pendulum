@@ -1,7 +1,6 @@
 use std::time::Duration;
 //use std::ops::{Index,IndexMut,Mul,Add,AddAssign};
 use rand::Rng;
-use std::iter;
 
 use nalgebra::{SMatrix,SVector};
 
@@ -12,16 +11,11 @@ use sdl2::render::Canvas;
 use sdl2::video::Window;
 use sdl2::gfx::primitives::DrawRenderer;
 
-const NDF: usize = 10;
-const DIM: usize = 2*NDF;
-
-fn sqr(x: f64) -> f64 {
-    x*x
-}
+const NDF: usize = 20;
 
 type Vector = SVector<f64, NDF>;
 type Matrix = SMatrix<f64, NDF, NDF>;
-type StateVector = SMatrix<f64, 2, NDF>;
+type StateVector = SMatrix<f64, NDF, 2>;
 
 struct State {
     s: StateVector,
@@ -29,9 +23,12 @@ struct State {
 
 impl State {
     fn sv_from_halves(x: &Vector, v: &Vector) -> StateVector {
-        StateVector::from_iterator(
-            x.iter().cloned().chain(v.iter().cloned())
-        )
+        let mut result = StateVector::zeros();
+        for i in 0..NDF {
+            result[(i, 0)] = x[i];
+            result[(i, 1)] = v[i];
+        }
+        result
     }
     fn from_halves(x: &Vector, v: &Vector) -> State {
         State {s: Self::sv_from_halves(x, v)}
@@ -45,67 +42,74 @@ impl State {
         )
     }
 
-    fn deriv(p: StateVector, dir: i32) -> StateVector {
-        // s_{jk} = min(j+1, k+1)*sin(phi_j-phi_k)
-        // c_{jk} = min(j+1, k+1)*cos(phi_j-phi_k)
+    fn deriv(p: StateVector) -> StateVector {
+        // s_{jk} = (N-max(j,k))*sin(phi_j-phi_k)
+        // c_{jk} = (N-max(j,k))*cos(phi_j-phi_k)
         let mut s = Matrix::zeros();
         let mut c = Matrix::zeros();
+        let x = p.column(0);
+        let v = p.column(1);
         for i in 0..NDF {
+            let a = (NDF - i) as f64;
+            c[(i,i)] = a;
             for j in 0..i {
-                s[(i,j)] = (j+1) as f64*(p[i]-p[j]).sin();
+                let (sij, cij) = (x[i]-x[j]).sin_cos();
+                s[(i,j)] = a * sij;
                 s[(j,i)] = -s[(i,j)];
-                c[(i,j)] = (j+1) as f64*(p[i]-p[j]).cos();
+                c[(i,j)] = a * cij;
                 c[(j,i)] = c[(i,j)];
             }
         }
         // RHS vector
-        let mut y = [0.; NDF];
-        for i in 0..NDF {
-            y[i] = 0.5 * i as f64 * p[i].sin();
-            for j in 0..NDF {
-                y[i] += s[(i,j)] * sqr(p[NDF+j]);
-            }
-        }
-        // TODO: Invert c*x=y using CG
+        let mut y = Vector::from_fn(|i, _| {
+            5. * (NDF-i) as f64 * x[i].sin()
+        }) - s * Vector::from_iterator(v.iter().map(|x| x*x));
+        c.cholesky().unwrap().solve_mut(&mut y);
 
         State::sv_from_halves(
-            &Vector::from_iterator(p.row(1).iter().cloned()),
-            &Vector::from_iterator([0.; NDF].iter().cloned()),
+            &Vector::from_iterator(v.iter().cloned()),
+            &y,
         )
     }
 
+    /*
     fn energy(&self) -> f64 {
         0.
     }
+    */
 
-    fn step(&mut self, dir: i32) {
+    fn step(&mut self) {
         let h = 0.001;
-        let k1 = Self::deriv(self.s, dir);
-        let k2 = Self::deriv(self.s + 0.5*h*k1, dir);
-        let k3 = Self::deriv(self.s + 0.5*h*k2, dir);
-        let k4 = Self::deriv(self.s + h*k3, dir);
+        let k1 = Self::deriv(self.s);
+        /*
+        println!("{} {}", self.s, k1);
+        panic!();
+        */
+        let k2 = Self::deriv(self.s + 0.5*h*k1);
+        let k3 = Self::deriv(self.s + 0.5*h*k2);
+        let k4 = Self::deriv(self.s + h*k3);
         self.s += h/6.0 * (k1+2.*k2+2.*k3+k4);
     }
 
     fn draw(&self, canvas: &mut Canvas<Window>) -> Result<(), String> {
-        println!("{}", self.energy());
+        //println!("{}", self.energy());
         let mut pos = (512., 384.);
-        let mut nextpos: (f64, f64);
-        for i in (0..NDF).rev() {
+        canvas.filled_circle(pos.0 as i16, pos.1 as i16, 5, Color::RGB(0,0,0))?;
+        for i in 0..NDF {
             let (s, c) = self.s[i].sin_cos();
             let nextpos = (
-                pos.0 + 50. * s,
-                pos.1 + 50. * c,
+                pos.0 + 500./NDF as f64 * s,
+                pos.1 - 500./NDF as f64 * c,
             );
             canvas.thick_line(
                 pos.0 as i16, pos.1 as i16,
                 nextpos.0 as i16, nextpos.1 as i16,
-                10, Color::RGB(0,0,0),
+                2, Color::RGB(0,0,0),
             )?;
+            pos = nextpos;
             canvas.filled_circle(
                 pos.0 as i16, pos.1 as i16, 5, Color::RGB(0,0,0)
             )?;
-            pos = nextpos;
         }
         Ok(())
     }
@@ -128,7 +132,7 @@ fn main() -> Result<(), String> {
     let mut event_pump = sdl_context.event_pump()?;
 
     let mut state = State::from_rand();
-    let mut dir = 0;
+    //let mut dir = 0;
 
 
     'running: loop {
@@ -140,19 +144,21 @@ fn main() -> Result<(), String> {
                 Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
                     break 'running
                 },
+                /*
                 Event::KeyDown { keycode: Some(Keycode::Up), .. } => {
                     dir = 1;
                 },
                 Event::KeyDown { keycode: Some(Keycode::Down), .. } => {
                     dir = -1;
                 },
+                */
                 _ => {}
             }
         }
 
-        for _ in 0..100 {
-            state.step(dir);
-            dir = 0;
+        for _ in 0..10 {
+            state.step();
+            //dir = 0;
         }
         state.draw(&mut canvas)?;
         canvas.present();
