@@ -1,5 +1,4 @@
 use std::time::Duration;
-//use std::ops::{Index,IndexMut,Mul,Add,AddAssign};
 use rand::Rng;
 
 use nalgebra::{SMatrix,SVector};
@@ -72,11 +71,22 @@ impl State {
         )
     }
 
-    /*
     fn energy(&self) -> f64 {
-        0.
+        let mut c = Matrix::zeros();
+        let x = self.s.column(0);
+        let mut result = 0.;
+        for i in 0..NDF {
+            let a = (NDF - i) as f64;
+            result += a*x[i].cos();
+            c[(i,i)] = a;
+            for j in 0..i {
+                c[(i,j)] = a * (x[i]-x[j]).cos();
+                c[(j,i)] = c[(i,j)];
+            }
+        };
+        let v = self.s.column(1);
+        5.*result + 0.5 * (v.transpose() * (c * v))[(0,0)]
     }
-    */
 
     fn step(&mut self) {
         let h = 0.001;
@@ -92,7 +102,7 @@ impl State {
     }
 
     fn draw(&self, canvas: &mut Canvas<Window>) -> Result<(), String> {
-        //println!("{}", self.energy());
+        println!("{}", self.energy());
         let mut pos = (512., 384.);
         canvas.filled_circle(pos.0 as i16, pos.1 as i16, 5, Color::RGB(0,0,0))?;
         for i in 0..NDF {
