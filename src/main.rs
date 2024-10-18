@@ -42,32 +42,32 @@ impl State {
     }
 
     fn deriv(p: StateVector) -> StateVector {
-        // s_{jk} = (N-max(j,k))*sin(phi_j-phi_k)
-        // c_{jk} = (N-max(j,k))*cos(phi_j-phi_k)
         let x = p.column(0);
         let v = p.column(1);
-        let mut vs = Vector::zeros();
-        let mut vc = Vector::zeros();
+        let mut sin = Vector::zeros();
+        let mut cos = Vector::zeros();
         for i in 0..NDF {
-            (vs[i], vc[i]) = x[i].sin_cos();
+            (sin[i], cos[i]) = x[i].sin_cos();
         }
-        let mut s = Matrix::zeros();
-        let mut c = Matrix::zeros();
+        // s_{jk} = (N-max(j,k))*sin(phi_j-phi_k)
+        // c_{jk} = (N-max(j,k))*cos(phi_j-phi_k)
+        let mut sin_diff = Matrix::zeros();
+        let mut cos_diff = Matrix::zeros();
         for i in 0..NDF {
             let a = (NDF - i) as f64;
-            c[(i,i)] = a;
+            cos_diff[(i,i)] = a;
             for j in 0..i {
-                s[(i,j)] = a * (vs[i]*vc[j] - vc[i]*vs[j]);
-                s[(j,i)] = -s[(i,j)];
-                c[(i,j)] = a * (vc[i]*vc[j] + vs[i]*vs[j]);
-                c[(j,i)] = c[(i,j)];
+                sin_diff[(i,j)] = a * (sin[i]*cos[j] - cos[i]*sin[j]);
+                sin_diff[(j,i)] = -sin_diff[(i,j)];
+                cos_diff[(i,j)] = a * (cos[i]*cos[j] + sin[i]*sin[j]);
+                cos_diff[(j,i)] = cos_diff[(i,j)];
             }
         }
         // RHS vector
         let mut y = Vector::from_fn(|i, _| {
-            5. * (NDF-i) as f64 * vs[i]
-        }) - s * Vector::from_iterator(v.iter().map(|x| x*x));
-        c.cholesky().unwrap().solve_mut(&mut y);
+            5. * (NDF-i) as f64 * sin[i]
+        }) - sin_diff * Vector::from_iterator(v.iter().map(|x| x*x));
+        cos_diff.cholesky().unwrap().solve_mut(&mut y);
 
         State::sv_from_halves(
             &Vector::from_iterator(v.iter().cloned()),
@@ -76,20 +76,25 @@ impl State {
     }
 
     fn energy(&self) -> f64 {
-        let mut c = Matrix::zeros();
         let x = self.s.column(0);
+        let mut sin = Vector::zeros();
+        let mut cos = Vector::zeros();
+        for i in 0..NDF {
+            (sin[i], cos[i]) = x[i].sin_cos();
+        }
         let mut result = 0.;
+        let mut cos_diff = Matrix::zeros();
         for i in 0..NDF {
             let a = (NDF - i) as f64;
-            result += a*x[i].cos();
-            c[(i,i)] = a;
+            result += a*cos[i];
+            cos_diff[(i,i)] = a;
             for j in 0..i {
-                c[(i,j)] = a * (x[i]-x[j]).cos();
-                c[(j,i)] = c[(i,j)];
+                cos_diff[(i,j)] = a * (cos[i]*cos[j]+sin[i]*sin[j]);
+                cos_diff[(j,i)] = cos_diff[(i,j)];
             }
         };
         let v = self.s.column(1);
-        5.*result + 0.5 * (v.transpose() * (c * v))[(0,0)]
+        5.*result + 0.5 * (v.transpose() * (cos_diff * v))[(0,0)]
     }
 
     fn step(&mut self) {
