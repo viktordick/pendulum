@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration,Instant};
 use rand::Rng;
 
 use nalgebra::{SMatrix,SVector};
@@ -10,7 +10,7 @@ use sdl2::render::Canvas;
 use sdl2::video::Window;
 use sdl2::gfx::primitives::DrawRenderer;
 
-const NDF: usize = 20;
+const NDF: usize = 100;
 
 type Vector = SVector<f64, NDF>;
 type Matrix = SMatrix<f64, NDF, NDF>;
@@ -44,24 +44,28 @@ impl State {
     fn deriv(p: StateVector) -> StateVector {
         // s_{jk} = (N-max(j,k))*sin(phi_j-phi_k)
         // c_{jk} = (N-max(j,k))*cos(phi_j-phi_k)
-        let mut s = Matrix::zeros();
-        let mut c = Matrix::zeros();
         let x = p.column(0);
         let v = p.column(1);
+        let mut vs = Vector::zeros();
+        let mut vc = Vector::zeros();
+        for i in 0..NDF {
+            (vs[i], vc[i]) = x[i].sin_cos();
+        }
+        let mut s = Matrix::zeros();
+        let mut c = Matrix::zeros();
         for i in 0..NDF {
             let a = (NDF - i) as f64;
             c[(i,i)] = a;
             for j in 0..i {
-                let (sij, cij) = (x[i]-x[j]).sin_cos();
-                s[(i,j)] = a * sij;
+                s[(i,j)] = a * (vs[i]*vc[j] - vc[i]*vs[j]);
                 s[(j,i)] = -s[(i,j)];
-                c[(i,j)] = a * cij;
+                c[(i,j)] = a * (vc[i]*vc[j] + vs[i]*vs[j]);
                 c[(j,i)] = c[(i,j)];
             }
         }
         // RHS vector
         let mut y = Vector::from_fn(|i, _| {
-            5. * (NDF-i) as f64 * x[i].sin()
+            5. * (NDF-i) as f64 * vs[i]
         }) - s * Vector::from_iterator(v.iter().map(|x| x*x));
         c.cholesky().unwrap().solve_mut(&mut y);
 
@@ -91,10 +95,6 @@ impl State {
     fn step(&mut self) {
         let h = 0.001;
         let k1 = Self::deriv(self.s);
-        /*
-        println!("{} {}", self.s, k1);
-        panic!();
-        */
         let k2 = Self::deriv(self.s + 0.5*h*k1);
         let k3 = Self::deriv(self.s + 0.5*h*k2);
         let k4 = Self::deriv(self.s + h*k3);
@@ -102,7 +102,6 @@ impl State {
     }
 
     fn draw(&self, canvas: &mut Canvas<Window>) -> Result<(), String> {
-        println!("{}", self.energy());
         let mut pos = (512., 384.);
         canvas.filled_circle(pos.0 as i16, pos.1 as i16, 5, Color::RGB(0,0,0))?;
         for i in 0..NDF {
@@ -117,9 +116,6 @@ impl State {
                 2, Color::RGB(0,0,0),
             )?;
             pos = nextpos;
-            canvas.filled_circle(
-                pos.0 as i16, pos.1 as i16, 5, Color::RGB(0,0,0)
-            )?;
         }
         Ok(())
     }
@@ -166,10 +162,12 @@ fn main() -> Result<(), String> {
             }
         }
 
-        for _ in 0..10 {
+        let t = Instant::now();
+        for _ in 0..100 {
             state.step();
             //dir = 0;
         }
+        println!("{} {}", t.elapsed().as_micros(), state.energy());
         state.draw(&mut canvas)?;
         canvas.present();
         std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
