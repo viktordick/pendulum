@@ -2,7 +2,7 @@ use std::time::{Duration,Instant};
 use rand::Rng;
 
 use nalgebra::{SMatrix,SVector};
-use nalgebra_lapack::Cholesky;
+// use nalgebra_lapack::Cholesky;
 
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
@@ -11,7 +11,7 @@ use sdl2::render::Canvas;
 use sdl2::video::Window;
 use sdl2::gfx::primitives::DrawRenderer;
 
-const NDF: usize = 100;
+const NDF: usize = 64;
 
 type Vector = SVector<f64, NDF>;
 type Matrix = SMatrix<f64, NDF, NDF>;
@@ -68,7 +68,8 @@ impl State {
         let mut y = Vector::from_fn(|i, _| {
             5. * (NDF-i) as f64 * sin[i]
         }) - sin_diff * Vector::from_iterator(v.iter().map(|x| x*x));
-        Cholesky::new(cos_diff).unwrap().solve_mut(&mut y);
+        cos_diff.cholesky().unwrap().solve_mut(&mut y);
+        // Cholesky::new(cos_diff).unwrap().solve_mut(&mut y);
 
         State::sv_from_halves(
             &Vector::from_iterator(v.iter().cloned()),
