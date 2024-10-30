@@ -174,8 +174,10 @@ fn main() -> Result<(), String> {
             state.step();
             //dir = 0;
         }
-        println!("{} {}", t.elapsed().as_micros(), state.energy());
+        let t1 = t.elapsed().as_micros();
         state.draw(&mut canvas)?;
+        let t2 = t.elapsed().as_micros() - t1;
+        println!("{} {} {}", t1, t2, state.energy());
         canvas.present();
         std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
     };
