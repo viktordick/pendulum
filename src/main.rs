@@ -110,20 +110,22 @@ impl State {
 
     fn draw(&self, canvas: &mut Canvas<Window>) -> Result<(), String> {
         let mut pos = (512., 384.);
-        canvas.filled_circle(pos.0 as i16, pos.1 as i16, 5, Color::RGB(0,0,0))?;
+        let mut vx = [0i16; NDF+1];
+        let mut vy = [0i16; NDF+1];
+        vx[0] = 512;
+        vy[0] = 384;
         for i in 0..NDF {
             let (s, c) = self.s[i].sin_cos();
-            let nextpos = (
+            pos = (
                 pos.0 + 500./NDF as f64 * s,
                 pos.1 - 500./NDF as f64 * c,
             );
-            canvas.thick_line(
-                pos.0 as i16, pos.1 as i16,
-                nextpos.0 as i16, nextpos.1 as i16,
-                2, Color::RGB(0,0,0),
-            )?;
-            pos = nextpos;
+            vx[i+1] = pos.0 as i16;
+            vy[i+1] = pos.1 as i16;
         }
+        canvas.filled_circle(vx[0], vy[0], 5, Color::RGB(0,0,0))?;
+        canvas.bezier(&vx, &vy, 2, Color::RGB(0,0,0))?;
+
         Ok(())
     }
 }
