@@ -2,7 +2,6 @@ use std::time::{Duration,Instant};
 use rand::Rng;
 
 use nalgebra::{SMatrix,SVector};
-// use nalgebra_lapack::Cholesky;
 
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
@@ -15,6 +14,7 @@ const NDF: usize = 64;
 
 type Vector = SVector<f64, NDF>;
 type Matrix = SMatrix<f64, NDF, NDF>;
+// Contains a position and a velocity vector
 type StateVector = SMatrix<f64, NDF, 2>;
 
 struct State {
@@ -22,6 +22,7 @@ struct State {
 }
 
 impl State {
+    // Create state vector from two vectors
     fn sv_from_halves(x: &Vector, v: &Vector) -> StateVector {
         let mut result = StateVector::zeros();
         for i in 0..NDF {
@@ -30,10 +31,13 @@ impl State {
         }
         result
     }
+
+    // Create state from two vectors
     fn from_halves(x: &Vector, v: &Vector) -> State {
         State {s: Self::sv_from_halves(x, v)}
     }
 
+    // Random initialization
     fn from_rand() -> State {
         let mut rng = rand::thread_rng();
         State::from_halves(
@@ -42,6 +46,13 @@ impl State {
         )
     }
 
+    /* Calculate the derivative as given by Euler-Lagrange.
+     *
+     * The ODE essentially boils down to
+     * C y'' = s(y) - S y'²
+     * where S and C are matrices containing sinus and cosinus of differences of angles (see below)
+     * and s contains the sinus of angles (from the potential)
+     */
     fn deriv(p: StateVector) -> StateVector {
         let x = p.column(0);
         let v = p.column(1);
@@ -68,8 +79,8 @@ impl State {
         let mut y = Vector::from_fn(|i, _| {
             5. * (NDF-i) as f64 * sin[i]
         }) - sin_diff * Vector::from_iterator(v.iter().map(|x| x*x));
+        // Use cholesky decomposition to invert symmetric matrix
         cos_diff.cholesky().unwrap().solve_mut(&mut y);
-        // Cholesky::new(cos_diff).unwrap().solve_mut(&mut y);
 
         State::sv_from_halves(
             &Vector::from_iterator(v.iter().cloned()),
@@ -77,6 +88,7 @@ impl State {
         )
     }
 
+    // Calculate current energy, which is printed after draw() to check stability
     fn energy(&self) -> f64 {
         let x = self.s.column(0);
         let mut sin = Vector::zeros();
@@ -99,6 +111,7 @@ impl State {
         5.*result + 0.5 * (v.transpose() * (cos_diff * v))[(0,0)]
     }
 
+    // RK4 iteration for full State
     fn step(&mut self) {
         let h = 0.001;
         let k1 = Self::deriv(self.s);
@@ -108,6 +121,7 @@ impl State {
         self.s += h/6.0 * (k1+2.*k2+2.*k3+k4);
     }
 
+    // Draw rope (bezier curve over the segments)
     fn draw(&self, canvas: &mut Canvas<Window>) -> Result<(), String> {
         let mut pos = (512., 384.);
         let mut vx = [0i16; NDF+1];
@@ -133,10 +147,8 @@ impl State {
 fn main() -> Result<(), String> {
     let sdl_context = sdl2::init()?;
     let video = sdl_context.video()?;
-    let width = 1024;
-    let height = 800;
     let mut canvas = video
-        .window("Pendulum", width, height)
+        .window("Pendulum", 1024, 800)
         .position_centered()
         .build()
         .map_err(|e| e.to_string())?
@@ -147,7 +159,6 @@ fn main() -> Result<(), String> {
     let mut event_pump = sdl_context.event_pump()?;
 
     let mut state = State::from_rand();
-    //let mut dir = 0;
 
 
     'running: loop {
@@ -159,14 +170,6 @@ fn main() -> Result<(), String> {
                 Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
                     break 'running
                 },
-                /*
-                Event::KeyDown { keycode: Some(Keycode::Up), .. } => {
-                    dir = 1;
-                },
-                Event::KeyDown { keycode: Some(Keycode::Down), .. } => {
-                    dir = -1;
-                },
-                */
                 _ => {}
             }
         }
@@ -174,11 +177,10 @@ fn main() -> Result<(), String> {
         let t = Instant::now();
         for _ in 0..100 {
             state.step();
-            //dir = 0;
         }
-        let t1 = t.elapsed().as_micros();
+        let t1 = t.elapsed().as_micros();  // render time
         state.draw(&mut canvas)?;
-        let t2 = t.elapsed().as_micros() - t1;
+        let t2 = t.elapsed().as_micros() - t1;  // draw time
         println!("{} {} {}", t1, t2, state.energy());
         canvas.present();
         std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
