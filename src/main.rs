@@ -1,6 +1,8 @@
 use std::time::{Duration,Instant};
+use std::thread;
 use rand::Rng;
 
+use crossbeam::{channel::{bounded,Sender,Receiver}};
 use nalgebra::{SMatrix,SVector};
 
 use sdl2::event::Event;
@@ -19,6 +21,7 @@ type StateVector = SMatrix<f64, NDF, 2>;
 
 struct State {
     s: StateVector,
+    receiver: Receiver<StateVector>,
 }
 
 impl State {
@@ -34,7 +37,14 @@ impl State {
 
     // Create state from two vectors
     fn from_halves(x: &Vector, v: &Vector) -> State {
-        State {s: Self::sv_from_halves(x, v)}
+        let s = Self::sv_from_halves(x, v);
+        let s_for_worker = s.clone();
+
+        let (sender, receiver) = bounded(10);
+        thread::spawn(move || {
+            State::simulate(s_for_worker, sender);
+        });
+        State {s, receiver}
     }
 
     // Random initialization
@@ -88,6 +98,24 @@ impl State {
         )
     }
 
+    // Thread worker
+    fn simulate(mut s: StateVector, sender: Sender<StateVector>) {
+        let h = 0.001;
+        while sender.send(s).is_ok() {
+            for _ in 0..100 {
+                let k1 = Self::deriv(s);
+                let k2 = Self::deriv(s + 0.5*h*k1);
+                let k3 = Self::deriv(s + 0.5*h*k2);
+                let k4 = Self::deriv(s + h*k3);
+                s += h/6.0 * (k1+2.*k2+2.*k3+k4);
+            }
+        }
+    }
+
+    fn steps(&mut self) {
+        self.s = self.receiver.recv().unwrap();
+    }
+
     // Calculate current energy, which is printed after draw() to check stability
     fn energy(&self) -> f64 {
         let x = self.s.column(0);
@@ -109,16 +137,6 @@ impl State {
         };
         let v = self.s.column(1);
         5.*result + 0.5 * (v.transpose() * (cos_diff * v))[(0,0)]
-    }
-
-    // RK4 iteration for full State
-    fn step(&mut self) {
-        let h = 0.001;
-        let k1 = Self::deriv(self.s);
-        let k2 = Self::deriv(self.s + 0.5*h*k1);
-        let k3 = Self::deriv(self.s + 0.5*h*k2);
-        let k4 = Self::deriv(self.s + h*k3);
-        self.s += h/6.0 * (k1+2.*k2+2.*k3+k4);
     }
 
     // Draw rope (bezier curve over the segments)
@@ -175,13 +193,13 @@ fn main() -> Result<(), String> {
         }
 
         let t = Instant::now();
-        for _ in 0..100 {
-            state.step();
-        }
+        state.steps();
         let t1 = t.elapsed().as_micros();  // render time
         state.draw(&mut canvas)?;
         let t2 = t.elapsed().as_micros() - t1;  // draw time
-        println!("{} {} {}", t1, t2, state.energy());
+        let energy = state.energy();
+        let t3 = t.elapsed().as_micros() - t1 - t2;
+        println!("{t1} {t2} {t3} {energy}");
         canvas.present();
         std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
     };
