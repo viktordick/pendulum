@@ -40,7 +40,7 @@ impl State {
         let s = Self::sv_from_halves(x, v);
         let s_for_worker = s.clone();
 
-        let (sender, receiver) = bounded(10);
+        let (sender, receiver) = bounded(16);
         thread::spawn(move || {
             State::simulate(s_for_worker, sender);
         });
@@ -154,6 +154,9 @@ impl State {
             );
             vx[i+1] = pos.0 as i16;
             vy[i+1] = pos.1 as i16;
+            //canvas.thick_line(
+            //    vx[i], vy[i], vx[i+1], vy[i+1], 2, Color::RGB(0,0,0)
+            //)?;
         }
         canvas.filled_circle(vx[0], vy[0], 5, Color::RGB(0,0,0))?;
         canvas.bezier(&vx, &vy, 2, Color::RGB(0,0,0))?;
@@ -180,6 +183,7 @@ fn main() -> Result<(), String> {
 
 
     'running: loop {
+        let t = Instant::now();
         canvas.set_draw_color(Color::RGB(155, 155, 155));
         canvas.clear();
         for event in event_pump.poll_iter() {
@@ -192,16 +196,18 @@ fn main() -> Result<(), String> {
             }
         }
 
-        let t = Instant::now();
         state.steps();
-        let t1 = t.elapsed().as_micros();  // render time
+        let t1 = t.elapsed().as_micros();  // simulation time (wait for result)
         state.draw(&mut canvas)?;
+        canvas.present();
         let t2 = t.elapsed().as_micros() - t1;  // draw time
         let energy = state.energy();
-        let t3 = t.elapsed().as_micros() - t1 - t2;
-        println!("{t1} {t2} {t3} {energy}");
-        canvas.present();
-        std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
+        let total = t.elapsed().as_nanos() as u32;
+        println!("{t1:6} {t2:6} {energy}");
+        if total < 1_000_000_000u32 / 60 {
+            // target framerate: 60
+            std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60 - total));
+        }
     };
     Ok(())
 }
